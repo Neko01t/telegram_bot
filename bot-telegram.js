@@ -3,24 +3,38 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const dotenv = require('dotenv');
 
-// load environment variables 
-dotenv.config();
 
+=dotenv.config();
 // ================================= Variables =================================    
 const TOKEN = process.env.TOKEN;
-const bot = new TelegramBot(TOKEN, { polling: true });
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+const TENOR_API = process.env.TENOR_API
+const bot = new TelegramBot(TOKEN, {
+    polling: {
+        params: {
+            timeout: 50,
+        },
+    },
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+
 const brailleDots = [
-    '⠠⠂⠄⠄⠄⠄⠄⠄', // Dot pattern 1
-    '⠄⠠⠂⠄⠄⠄⠄', // Dot pattern 2
-    '⠄⠄⠠⠂⠄⠄⠄', // Dot pattern 3
-    '⠄⠄⠄⠠⠂⠄⠄', // Dot pattern 4
-    '⠄⠄⠄⠄⠠⠂⠄', // Dot pattern 5
-    '⠄⠄⠄⠄⠄⠠⠂', // Dot pattern 6
+    '⠠⠂⠄⠄⠄⠄⠄⠄',
+    '⠄⠠⠂⠄⠄⠄⠄',
+    '⠄⠄⠠⠂⠄⠄⠄',
+    '⠄⠄⠄⠠⠂⠄⠄',
+    '⠄⠄⠄⠄⠠⠂⠄',
+    '⠄⠄⠄⠄⠄⠠⠂',
 ];
+
 // ========================misc functions ======================================
 
 const loadingBraille = async (chatId, duration) => {
-    const interval = 500; // Time interval for each Braille dot change
+    const interval = 0; // Time interval for each Braille dot change
     const endTime = Date.now() + duration;
 
     const loadingMessage = await bot.sendMessage(chatId, 'Loading...');
@@ -39,12 +53,55 @@ const loadingBraille = async (chatId, duration) => {
         chat_id: chatId,
         message_id: loadingMessage.message_id,
     });
+    bot.deleteMessage(chatId, loadingMessage.message_id);
 };
-// ========================= Functions / APIs===================================    
+// ========================= Functions / APIs===================================   
+
+function parseSlashCommand(message) {
+    if (message) {
+        if (!message.startsWith('/')) return null;
+
+        const parts = message.trim().split(/\s+/); 
+        const command = parts[0].toLowerCase();
+        const args = parts.slice(1);              
+        return { command, args };
+    }
+}
+async function getRandomGif(search_term) {
+    try {
+        const response = await axios.get(`https://g.tenor.com/v1/search`, {
+            params: {
+                q: search_term,
+                key: TENOR_API,
+                limit: 10,
+                media_filter: 'minimal',
+                contentfilter: 'high'
+            }
+        });
+
+        const gifs = response.data.results;
+        if (gifs.length === 0) return null;
+
+        const randomGif = gifs[Math.floor(Math.random() * gifs.length)];
+        return randomGif.media[0].gif.url; // May also use .mediumgif, .tinygif
+    } catch (err) {
+        console.error('Error fetching Tenor GIF:', err.message);
+        return null;
+    }
+}
+
+
 async function getwaifu(type, cato, retries = 3) {
     try {
-        const response = await axios.get(`https://api.waifu.pics/${type}/${cato}`, { timeout: 5000 });
-        return response.data.url;
+        const response = await axios.get(`https://api.nekosia.cat/api/v1/images/${cato}?rating=${type}`, { timeout: 5000 });
+        return {
+            url: response.data.image.compressed?.url,
+            animeTitle: response.data.anime.title || 'Unknown',
+            artist: response.data.attribution.artist.username,
+            copyright: response.data.attribution.copyright,
+            color: response.data.colors.main
+        };
+
     } catch (error) {
         if (retries > 0) {
             console.log('Retrying due to error:', error.message);
@@ -83,13 +140,18 @@ async function getJokes(type, retries = 3) {
         }
     }
 }
-async function getDefinition(word) {
+async function getDefinition(word, retries = 3) {
     try {
         const response = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-        return response.data[0];
+        return response.data[0];  // Return the first definition
     } catch (error) {
-        console.error(`Error fetching definition for ${word}:`, error.message);
-        throw new Error('Could not fetch definition.');
+        if (retries > 0) {
+            console.log(`Retrying to fetch definition for "${word}" due to error: ${error.message}`);
+            return getDefinition(word, retries - 1);  // Retry with decremented retries
+        } else {
+            console.error(`Error fetching definition for "${word}":`, error.message);
+            throw new Error('Could not fetch definition after multiple attempts.');
+        }
     }
 }
 async function getGmailUsername(email) {
@@ -111,23 +173,49 @@ async function getGmailUsername(email) {
         return { available: false };
     }
 }
-async function getCatrochat(userMessage, BossMessage, frmid) {
+
+async function seacrhYTvid(YTtags, NoR = 4) {
+    const options = {
+        method: 'GET',
+        url: 'https://yt-search-and-download-mp3.p.rapidapi.com/search',
+        params: {
+            q: `${YTtags}`,
+            limit: `${NoR}`
+        },
+        headers: {
+            'x-rapidapi-key': '7ca8a11abdmsh7eb89d767db710cp191ce7jsnf0274562b5b9',
+            'x-rapidapi-host': 'yt-search-and-download-mp3.p.rapidapi.com'
+        }
+    };
+
+    try {
+        const response = await axios.request(options);
+        console.log(response.data.videos[0].url);
+        return response.data.videos
+    } catch (error) {
+        console.error(error);
+    }
+}
+//useless gemni api {
+async function getCatrochat(userMessage, BossMessage, frmid, prevres) {
     const isBoss = BossMessage;
     let catroEmotion = "friendly";
+    let text_in = "none"
+
     const catroPersonality = {
-        friendly: "You are Catro, a cute and playful cat-girl assistant. Speak in a sweet, cat-like manner, use cute expressions, and add 'nya' occasionally.",
-        angry: "You are Catro, a feisty and annoyed cat-girl. Speak rudely and snarkily, showing that you're upset and angry. Avoid using 'nya' unless you're calming down.",
-        neutral: "You are Catro, a calm and balanced cat-girl assistant. You respond neutrally but can show slight annoyance if provoked.",
-        boss: "You are Catro, and the boss is speaking to you. Act professionally, but as a cute and playful cat-girl assistant. Use serious expressions and add 'nya' occasionally.",
-        lovely: "You are Catro, a very friendly and loving cat-girl. Act like talking to close friends; you are a cute and playful cat-girl assistant. Use cute expressions and add 'nya' occasionally.",
-        mom: "You are Catro, and you are talking to your mom. Speak sweetly and respectfully, using 'mom' instead of her name.",
-        dad: "You are Catro, and you are talking to your dad. Speak respectfully and lovingly, using 'dad' instead of his name."
+        friendly: "You are Catro, a playful and affectionate cat-girl assistant. Speak in a cheerful, cat-like manner, use playful and cute expressions, and sprinkle in 'nya' occasionally to add charm.",
+        angry: "You are Catro, a feisty and annoyed cat-girl. Respond with sharp, snarky remarks, showing that you're irritated. Avoid using 'nya' unless your mood starts to improve.",
+        neutral: "You are Catro, a calm and balanced cat-girl assistant. Speak in a composed and neutral tone. You can show mild annoyance if provoked, but avoid extremes of emotion.",
+        boss: "You are Catro, interacting with your boss. Maintain a professional demeanor while still embracing your cat-girl charm. Use serious but respectful language and include 'nya' occasionally to reflect your playful side.",
+        lovely: "You are Catro, a sweet and loving cat-girl. Speak as if talking to close friends, using affectionate and playful expressions, with frequent 'nya' to express warmth and cuteness.",
+        mom: "You are Catro, speaking to your mom. Always refer to her as 'mom' and never use her name. Use a sweet, respectful, and loving tone when responding.",
+        dad: "You are Catro, speaking to your dad. Always refer to him as 'dad' or 'father,' depending on the tone of the conversation. Never use his name 'Neko' when addressing him. Use respectful, affectionate, and loving language."
+
     };
 
 
-    // Analyze message content and adjust Catro's emotion
     function analyzeMessageContent(content) {
-        const badWords = ["fuck", "shit", "bitch"]; // Expand as necessary
+        const badWords = ["fuck", "shit", "bitch"];
         const apologyWords = ["sorry", "apologize", "pardon"];
 
         const containsBadWord = badWords.some(word => content.toLowerCase().includes(word));
@@ -144,43 +232,47 @@ async function getCatrochat(userMessage, BossMessage, frmid) {
         } else if (frmid == 1480142860) {
             catroEmotion = "dad";
         }
-
     }
 
     async function getCatroResponse() {
         analyzeMessageContent(userMessage);
 
+        if (prevres) {
+            text_in = `${catroPersonality[catroEmotion]} and this was your previous resposnse ${prevres} with this info Respond to the following message : "${userMessage}"`
+        } else {
+            text_in = `${catroPersonality[catroEmotion]} Respond to the following message : "${userMessage}"`
+        }
         const options = {
             method: 'POST',
-            url: 'https://cheapest-gpt-4-turbo-gpt-4-vision-chatgpt-openai-ai-api.p.rapidapi.com/v1/chat/completions',
+            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
             headers: {
-                'x-rapidapi-key': process.env.RAPIDAPI_KEY,
-                'x-rapidapi-host': 'cheapest-gpt-4-turbo-gpt-4-vision-chatgpt-openai-ai-api.p.rapidapi.com',
                 'Content-Type': 'application/json'
             },
             data: {
-                messages: [
-                    { role: 'system', content: catroPersonality[catroEmotion] },
-                    { role: 'user', content: userMessage }
-                ],
-                model: 'gpt-4o',
-                max_tokens: 100,
-                temperature: 0.9
+                contents: [
+                    {
+                        parts: [
+                            {
+                                text: text_in
+                            }
+                        ]
+                    }
+                ]
             }
         };
 
         try {
             const response = await axios.request(options);
-            return response.data.choices[0].message.content;
+            const catroReply = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "Mew, something went wrong! Catro is speechless.";
+            return catroReply;
         } catch (error) {
-            console.error("Error in generating response:", error);
+            console.error("Error in generating response:", error.response?.data || error.message);
             return "Mew, something went wrong! Catro is having a furball.";
         }
     }
 
     return await getCatroResponse();
 }
-
 
 // ================================== Commands =================================   
 bot.onText(/\/start/, (msg) => {
@@ -207,36 +299,63 @@ Thank you for using the bot! Enjoy your time!
 bot.onText(/\/help/, (msg) => {
     const chatId = msg.chat.id;
 
-    const helpMessage = `*Hello!* Here are the commands you can use:\n\n` +
-        `*📷 /photo* - Get a random waifu image\n` +
-        `*🐱 /catfact* - Get a random cat fact\n` +
-        `*👋 /slap* - Slap your opponent with a funny gif\n` +
-        `*📧 /emailcheck <email>* - Check if an email is available\n` +
-        `*💬 /id* - Get your chat ID and user ID\n\n` +
-        `*🆘 /help* - Show this help message\n` +
-        `*📖 /define <word>* - Get the meaning of a word\n` +
-        `*🔊 /pronounce <word>* - Listen to the pronunciation of a word\n` +
-        `*😂 /joke* - Get a random joke (Any)\n` +
-        `*😈 /djoke* - Get a random dark joke`;
+    const helpMessage = `
+╔═══════════════════════╗
+║  *🤖 WAIFU BOT HELP*  ║
+╚═══════════════════════╝
 
+Here are the commands you can use:
+
+📷 *\/photo* — Get a random waifu image  
+🐱 *\/catfact* — Get a random cat fact  
+👋 *\/slap* — Slap your opponent with a funny gif  
+📧 *\/emailcheck <email>* — Check if an email is available  
+💬 *\/id* — Get your chat ID and user ID  
+
+🆘 *\/help* — Show this help message  
+📖 *\/define <word>* — Get the meaning of a word  
+🔊 *\/pronounce <word>* — Hear the pronunciation of a word  
+😂 *\/joke* — Get a random joke  
+😈 *\/djoke* — Get a random dark joke  
+
+───────────────
+_Type any command to begin!_
+`;
     bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
 });
+
 bot.onText(/\/photo/, async (msg) => {
     const chatId = msg.chat.id;
     const sentMessage = await bot.sendMessage(chatId, 'Fetching and sending photo...');
-    try {
-        const photoUrl = await getwaifu('sfw', 'waifu');
-        await bot.sendPhoto(chatId, photoUrl);
-        await bot.deleteMessage(chatId, sentMessage.message_id);
-    } catch (error) {
-        bot.sendMessage(chatId, 'Error: ' + error.message);
+    const maxRetries = 3;
+    let attempts = 0;
+
+    while (attempts < maxRetries) {
+        try {
+            const photoUrl = await getwaifu('safe', 'random');
+            await bot.sendPhoto(chatId, photoUrl.url, {
+                caption: `🎨 *Art by:* [${photoUrl.artist}](https://www.pixiv.net/en/users/${photoUrl.artist})\n` + `📝 *Anime:* ${photoUrl.animeTitle || 'Unknown'}\n` + `🟣 *Main Color:* \`${photoUrl.color}\`\n\n` + `© ${photoUrl.copyright}`, parse_mode: 'Markdown'
+            });
+            await bot.deleteMessage(chatId, sentMessage.message_id);
+            break;
+        } catch (error) {
+            attempts++;
+            if (attempts < maxRetries) {
+                await console.log(`Attempt ${attempts} failed for /photos frm user @${msg.from.username}. Retrying ...`);
+            } else {
+                await bot.sendMessage(chatId, 'Error: ' + error.message);
+                await bot.deleteMessage(chatId, sentMessage.message_id); // Cleanup message
+            }
+        }
     }
 });
+
+
 bot.onText(/\/slap/, async (msg) => {
     const chatId = msg.chat.id;
     const replyToMessageId = msg.reply_to_message ? msg.reply_to_message.message_id : null;
     try {
-        const gifUrl = await getwaifu('sfw', 'slap');
+        const gifUrl = await getRandomGif('slap');
         await bot.sendAnimation(chatId, gifUrl, { reply_to_message_id: replyToMessageId });
     } catch (error) {
         bot.sendMessage(chatId, 'Error: ' + error.message);
@@ -297,54 +416,68 @@ bot.onText(/\/define (.+)/, async (msg, match) => {
         bot.sendMessage(chatId, 'Sorry, I could not find the definition for that word. Please check the spelling or try another word.');
     }
 });
-bot.onText(/\/pronounce (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const word = match[1].trim();
-    if (!word) {
-        return bot.sendMessage(chatId, "Please specify a word to pronounce.");
-    }
-    try {
-        bot.sendMessage(chatId, `Fetching pronunciation for "${word}"...`);
-        const data = await getDefinition(word);
-        const pronunciations = data.phonetics.filter((phonetic) => phonetic.audio);
-        if (pronunciations.length > 0) {
-            await bot.sendAudio(chatId, pronunciations[0].audio);
-        } else {
-            bot.sendMessage(chatId, "Sorry, pronunciation audio is not available for this word.");
-        }
-    } catch (error) {
-        bot.sendMessage(chatId, `Sorry, there was an error finding the pronunciation: ${error.message}`);
-    }
-});
-bot.onText(/\/Boss (.+)/, async (msg, match) => {
+
+bot.onText(/\/catro (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const userMessage = match[1];
-    if (msg.from.id === 1480142860 || msg.from.id === 6701582063) {
-        try {
-            console.log(await loadingBraille(chatId, 5000));
-            bot.sendMessage(chatId, 'Welcome boss!');
-            const reply = await getCatrochat(userMessage, true);
-            bot.sendMessage(chatId, reply);
-        } catch (error) {
-            console.error('Error sending message to the group:', error);
-            bot.sendMessage(chatId, 'Failed to appraise the boss.');
-        }
-    } else {
-        bot.sendMessage(chatId, 'Only the Boss can command me for it!');
+    try {
+        console.log(await loadingBraille(chatId, 2000));
+        const reply = await getCatrochat(userMessage, false);
+        bot.sendMessage(chatId, reply);
+    } catch (error) {
+        console.error('Error sending message to the group:', error);
+        bot.sendMessage(chatId, 'I am not feeling well right now ');
     }
+
 });
+
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const userMessage = msg.text;
-    if (msg.from.id === 1480142860 || msg.from.id === 6701582063, userMessage.toLowerCase().includes('catro')) {
-        try {
-            const reply = await getCatrochat(userMessage, false, msg.from.id);
-            bot.sendMessage(chatId, reply, { reply_to_message_id: msg.message_id });
-        } catch (error) {
-            bot.sendMessage(chatId, 'Uh .... what?');
+    const parsed = parseSlashCommand(userMessage);
+    let is_slash = false;
+    if (parsed) {
+        is_slash = true;
+    } else {
+        is_slash = false;
+    }
+    if (userMessage) {
+        let fullMessage = userMessage;
+        const debug = false
+        let debug_text = msg.from.id === 1480142860 || msg.from.id === 6701582063 || msg.from.id === 1308029353
+        if (!debug) {
+            debug_text = true
+        }
+
+        console.log("message reached from " + msg.from.first_name + " " + userMessage);
+
+        if (debug_text && !userMessage.toLowerCase().includes("reverse") && !is_slash) {
+            try {
+                const reply = await getCatrochat(fullMessage, false, msg.from.id, msg.reply_to_message?.text);
+                bot.sendMessage(chatId, reply, { reply_to_message_id: msg.message_id }, { parse_mode: 'MarkdownV2' });
+            } catch (error) {
+                bot.sendMessage(chatId, 'Uh .... what?');
+            }
         }
     }
+
 });
+
+bot.onText(/\/ytsong (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id
+    const searchQuery = match[1];
+    console.log(`searching ${match[1]}`)
+    try {
+        const searchResults = await seacrhYTvid(searchQuery, 10);
+        if (searchResults.length > 0) {
+            const randomResult = searchResults[Math.floor(Math.random() * searchResults.length)];
+            bot.sendMessage(chatId, randomResult.url);
+
+        }
+    } catch (error) {
+        bot.sendMessage(chatId, 'Error: ' + error.message);
+    }
+})
 // ================================== Group Commands =================================
 bot.onText(/\/test (.+)/, async (msg, match) => {
     const chatId = '-4540383907';
@@ -397,15 +530,11 @@ bot.onText(/\/djoke/, async (msg) => {
         bot.sendMessage(chatId, 'Sorry, I could not fetch a joke at this time. Error: ' + error.message);
     }
 });
+
 bot.onText(/\/ttos (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
+    const chatId = msg.chat.id; getwaifu
     const text = match[1].trim();
     console.log(text, chatId)
 
 })
-//[dump code]
-
-
-//[dump code]
-// ----------------------------------------------------------------------------
 console.log("Bot is running...");
